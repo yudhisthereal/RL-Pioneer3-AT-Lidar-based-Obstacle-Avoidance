@@ -10,21 +10,27 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.5045958307412232 -0.009182150237661684 -0.8633068606906746 3.0469413345003633
-  position 5.254792346287315 0.2919958860471277 9.418129046888392
+  orientation 0.6143476723223708 -0.021219404346868878 -0.7887500709294734 3.0926523674160338
+  position 3.043863282569478 1.07653813115979 12.873267493939014
 }
-RectangleArena {
+DEF start Pose {
+  translation -1.85 1.23 0.22
+}
+DEF finish Pose {
+  translation 1.74 -0.91 0
+}
+DEF rectable_arena RectangleArena {
   translation 0 0.15 0
   floorSize 5 3
   wallHeight 0.6
 }
-Wall {
+DEF wall_1 Wall {
   translation -0.5 0.640012 -2.87703e-09
   rotation -1.91796e-08 1.91795e-08 -1 -1.5707953071795862
   name "wall(1)"
   size 0.1 4 0.5
 }
-Wall {
+DEF wall_2 Wall {
   translation 0.47 -0.37999 -2.80025e-08
   rotation 9.589789999999996e-09 -9.589759999999998e-09 0.9999999999999998 1.5707953071795862
   name "wall(2)"
@@ -34,9 +40,10 @@ TexturedBackground {
 }
 TexturedBackgroundLight {
 }
-Pioneer3at {
+DEF Pioneer_3AT Pioneer3at {
   translation -1.68 1.17 0
-  controller "conventional_control"
+  controller "rl_control"
+  supervisor TRUE
   extensionSlot [
     Emitter {
     }
