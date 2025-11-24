@@ -33,21 +33,26 @@ class LidarPlotter:
         plt.ion()
         self.fig = plt.figure(figsize=(15, 12))
         
-        # Polar plot
+        # Polar plot - Configure for front at top (180 degrees)
         self.ax1 = self.fig.add_subplot(221, projection='polar')
         self.scatter_polar = self.ax1.scatter([], [], c=[], cmap='RdYlGn_r', s=30, alpha=0.7)
         self.ax1.set_ylim(0, 2.5)
-        self.ax1.set_title("LIDAR - Polar View", fontsize=14, fontweight='bold')
+        self.ax1.set_title("LIDAR - Polar View (Front = 180°)", fontsize=14, fontweight='bold')
         self.ax1.grid(True)
+        # Set 180 degrees (front) to be at the top
+        self.ax1.set_theta_zero_location("N")  # 0 degrees at North (top)
+        self.ax1.set_theta_direction(-1)       # Clockwise rotation
         
-        # Cartesian plot
+        # Cartesian plot - Configure for front at top
         self.ax2 = self.fig.add_subplot(222)
         self.scatter_cartesian = self.ax2.scatter([], [], c=[], cmap='RdYlGn_r', s=30, alpha=0.7)
         self.ax2.set_xlim(-2.5, 2.5)
         self.ax2.set_ylim(-2.5, 2.5)
-        self.ax2.set_title("LIDAR - Cartesian View", fontsize=14, fontweight='bold')
+        self.ax2.set_title("LIDAR - Cartesian View (Front = Up)", fontsize=14, fontweight='bold')
         self.ax2.grid(True)
         self.ax2.set_aspect('equal')
+        # Add front direction indicator
+        self.ax2.arrow(0, 0, 0, 0.3, head_width=0.1, head_length=0.1, fc='blue', ec='blue', label='Front')
         
         # Sector distances plot
         self.ax3 = self.fig.add_subplot(223)
@@ -151,11 +156,17 @@ class LidarPlotter:
             return
         
         N = len(ranges)
+        
+        # Adjust angles so 180 degrees (front) is at the top
+        # Original: 0° = front, 90° = left, 180° = back, 270° = right
+        # We want: 180° = front (top), 90° = right, 270° = left
         angles = np.linspace(0, 2*np.pi, N)
+        # Shift by 180 degrees so front (180°) becomes 0° in polar coordinates (top)
+        adjusted_angles = (angles + np.pi) % (2*np.pi)
         
         # Filter out infinite ranges
         valid_mask = np.isfinite(ranges)
-        plot_angles = angles[valid_mask]
+        plot_angles = adjusted_angles[valid_mask]
         plot_ranges = np.array(ranges)[valid_mask]
         
         # Update polar plot
@@ -174,9 +185,11 @@ class LidarPlotter:
             self.safe_circle.remove()
         self.safe_circle, = self.ax1.plot(theta, [safe_dist]*100, 'g--', linewidth=2, alpha=0.5, label='Safe Distance')
         
-        # Update Cartesian plot
-        x = plot_ranges * np.cos(plot_angles)
-        y = plot_ranges * np.sin(plot_angles)
+        # Update Cartesian plot - front at top (positive Y direction)
+        # Convert polar to Cartesian with front at top
+        x = plot_ranges * np.sin(plot_angles)  # Use sin for X to match the polar rotation
+        y = plot_ranges * np.cos(plot_angles)  # Use cos for Y to have front at top
+        
         self.scatter_cartesian.set_offsets(np.c_[x, y])
         self.scatter_cartesian.set_array(plot_ranges)
         self.scatter_cartesian.set_clim(0, 2.5)
@@ -194,6 +207,11 @@ class LidarPlotter:
         self.cartesian_safe = plt.Circle((0, 0), safe_dist, color='green', fill=False, 
                                        linestyle='--', linewidth=2, alpha=0.5, label='Safe Distance')
         self.ax2.add_patch(self.cartesian_safe)
+        
+        # Update front direction arrow
+        if not hasattr(self, 'front_arrow'):
+            self.front_arrow = self.ax2.arrow(0, 0, 0, 0.3, head_width=0.1, head_length=0.1, 
+                                            fc='blue', ec='blue', label='Front')
         
         # Update sector distances (7 sectors now)
         sector_distances = self.get_sector_distances(ranges)
@@ -216,7 +234,7 @@ Avoid Threshold: {threshold:.2f} m
 Safe Distance: {safe_dist:.2f} m
 Data Points: {len(plot_ranges)}
 
-Sector Distances:
+Sector Directions (Front = Up):
 Far Left: {sector_distances[0]:.2f} m
 Left: {sector_distances[1]:.2f} m
 Front-Left: {sector_distances[2]:.2f} m
