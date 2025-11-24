@@ -1,0 +1,54 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/apartment_structure/protos/Wall.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/adept/pioneer3/protos/Pioneer3at.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/devices/sick/protos/SickLms291.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation 0.5045958307412232 -0.009182150237661684 -0.8633068606906746 3.0469413345003633
+  position 5.254792346287315 0.2919958860471277 9.418129046888392
+}
+RectangleArena {
+  translation 0 0.15 0
+  floorSize 5 3
+  wallHeight 0.6
+}
+Wall {
+  translation -0.5 0.640012 -2.87703e-09
+  rotation -1.91796e-08 1.91795e-08 -1 -1.5707953071795862
+  name "wall(1)"
+  size 0.1 4 0.5
+}
+Wall {
+  translation 0.47 -0.37999 -2.80025e-08
+  rotation 9.589789999999996e-09 -9.589759999999998e-09 0.9999999999999998 1.5707953071795862
+  name "wall(2)"
+  size 0.1 4 0.5
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+Pioneer3at {
+  translation -1.68 1.17 0
+  controller "conventional_control"
+  extensionSlot [
+    Emitter {
+    }
+    SickLms291 {
+      translation 0.14 0 0.34
+    }
+  ]
+}
+Robot {
+  children [
+    Receiver {
+    }
+  ]
+  name "receiver_robot"
+}
