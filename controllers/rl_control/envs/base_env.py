@@ -1,282 +1,250 @@
-# base_env.py
-# Base environment class for RL training
-
 import numpy as np
-import gym
-from abc import ABC, abstractmethod
-from typing import Tuple, Optional, Dict, Any
+import math
+from controller import Robot, Motor, DistanceSensor, Lidar
 
-
-class BaseEnv(gym.Env, ABC):
-    """
-    Base environment class for RL training with Webots.
-    Compatible with both PPO and DQN algorithms.
-    """
-    
-    metadata = {'render.modes': ['human']}
-    
-    def __init__(self, scenario, max_episode_steps=1000):
-        """
-        Initialize the RL environment.
-        
-        Args:
-            scenario: BaseScenario instance
-            max_episode_steps: Maximum steps per episode
-        """
-        super().__init__()
-        
-        self.scenario = scenario
-        self.max_episode_steps = max_episode_steps
+class BaseEnv:
+    def __init__(self, robot, max_steps=1000):
+        self.robot = robot
+        self.timestep = int(robot.getBasicTimeStep())
+        self.max_steps = max_steps
         self.current_step = 0
-        self.episode_count = 0
-        self.total_steps = 0
         
-        # Initialize observation and action spaces
-        self.observation_space = self._get_observation_space()
-        self.action_space = self._get_action_space()
+        # Initialize robot components
+        self.setup_robot()
         
-        # Episode tracking
-        self.episode_reward = 0.0
-        self.episode_metrics = {}
+        # Environment parameters
+        self.lidar_rays = 16  # Number of lidar rays to use
+        self.max_velocity = 6.4  # Maximum motor velocity
         
-    def _get_observation_space(self) -> gym.Space:
-        """
-        Define the observation space based on scenario dimensions.
-        """
-        obs_dim = self.scenario.get_obs_dim()
-        # Assuming continuous observations, modify if discrete needed
-        return gym.spaces.Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(obs_dim,), 
-            dtype=np.float32
-        )
+    def setup_robot(self):
+        """Initialize robot motors and sensors"""
+        # Get motors
+        self.motors = []
+        motor_names = ['front left wheel', 'front right wheel', 
+                      'back left wheel', 'back right wheel']
+        
+        for name in motor_names:
+            motor = self.robot.getDevice(name)
+            motor.setPosition(float('inf'))
+            motor.setVelocity(0.0)
+            self.motors.append(motor)
+        
+        # Get lidar
+        self.lidar = self.robot.getDevice('Sick LMS 291')
+        if self.lidar:
+            self.lidar.enable(self.timestep)
+            self.lidar_width = self.lidar.getHorizontalResolution()
+        
+        # Get distance sensors (sonar)
+        self.distance_sensors = []
+        for i in range(16):
+            sensor_name = f'so{i}'
+            sensor = self.robot.getDevice(sensor_name)
+            if sensor:
+                sensor.enable(self.timestep)
+                self.distance_sensors.append(sensor)
+        
+        # Get GPS for position tracking (if available)
+        self.gps = self.robot.getDevice('gps')
+        if self.gps:
+            self.gps.enable(self.timestep)
+        
+        # Get IMU for orientation (if available)
+        self.imu = self.robot.getDevice('inertial unit')
+        if self.imu:
+            self.imu.enable(self.timestep)
     
-    def _get_action_space(self) -> gym.Space:
-        """
-        Define the action space based on scenario dimensions.
-        Override this method for discrete action spaces.
-        """
-        act_dim = self.scenario.get_act_dim()
-        # Default to continuous action space, override for discrete
-        return gym.spaces.Box(
-            low=-1.0, 
-            high=1.0, 
-            shape=(act_dim,), 
-            dtype=np.float32
-        )
+    def get_lidar_data(self):
+        """Get processed lidar data"""
+        if not self.lidar:
+            return np.ones(self.lidar_rays) * 10.0  # Default far distance
+        
+        # Get raw lidar data
+        lidar_data = self.lidar.getRangeImage()
+        
+        if len(lidar_data) == 0:
+            return np.ones(self.lidar_rays) * 10.0
+        
+        # Process lidar data - select subset of rays
+        total_rays = len(lidar_data)
+        step = total_rays // self.lidar_rays
+        
+        processed_data = []
+        for i in range(0, total_rays, step):
+            if i < total_rays:
+                # Filter invalid values
+                value = lidar_data[i]
+                if math.isinf(value) or value > 10.0:
+                    value = 10.0
+                processed_data.append(value)
+        
+        # Ensure we have exactly lidar_rays values
+        while len(processed_data) < self.lidar_rays:
+            processed_data.append(10.0)
+        
+        return np.array(processed_data[:self.lidar_rays])
     
-    def reset(self) -> np.ndarray:
-        """
-        Reset the environment for a new episode.
+    def get_sonar_data(self):
+        """Get distance sensor data"""
+        sonar_data = []
+        for sensor in self.distance_sensors:
+            value = sensor.getValue()
+            # Filter invalid values
+            if math.isinf(value) or value > 2.0:
+                value = 2.0
+            sonar_data.append(value)
         
-        Returns:
-            observation: Initial observation
-        """
-        self.current_step = 0
-        self.episode_reward = 0.0
-        self.episode_metrics = {}
-        
-        # Reset the scenario
-        observation = self.scenario.reset()
-        
-        # Update episode count
-        self.episode_count += 1
-        
-        return observation
+        return np.array(sonar_data)
     
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
-        """
-        Execute one time step in the environment.
-        
-        Args:
-            action: Action to apply
+    def get_robot_position(self):
+        """Get robot position from GPS"""
+        if self.gps:
+            return np.array(self.gps.getValues())
+        else:
+            return np.array([0.0, 0.0, 0.0])
+    
+    def get_robot_velocity(self):
+        """Get robot linear velocity"""
+        if self.gps:
+            # GPS can provide velocity in some implementations
+            # This is a simplified version
+            return 0.0
+        else:
+            # Estimate velocity from motor speeds
+            left_speed = (self.motors[0].getVelocity() + self.motors[2].getVelocity()) / 2
+            right_speed = (self.motors[1].getVelocity() + self.motors[3].getVelocity()) / 2
+            return (left_speed + right_speed) / 2
+    
+    def get_robot_angular_velocity(self):
+        """Get robot angular velocity"""
+        if self.imu:
+            # Get rotation rates from IMU
+            imu_values = self.imu.getRollPitchYaw()
+            return imu_values[2]  # Yaw rate
+        else:
+            # Estimate from wheel speed difference
+            left_speed = (self.motors[0].getVelocity() + self.motors[2].getVelocity()) / 2
+            right_speed = (self.motors[1].getVelocity() + self.motors[3].getVelocity()) / 2
+            return (right_speed - left_speed) / 2
+    
+    def get_robot_orientation(self):
+        """Get robot orientation"""
+        if self.imu:
+            return np.array(self.imu.getRollPitchYaw())
+        else:
+            return np.array([0.0, 0.0, 0.0])
+    
+    def apply_action(self, action):
+        """Apply motor actions to the robot"""
+        # action should be [left_speed, right_speed] in range [-1, 1]
+        if len(action) == 2:
+            left_speed = np.clip(action[0], -1, 1) * self.max_velocity
+            right_speed = np.clip(action[1], -1, 1) * self.max_velocity
             
-        Returns:
-            observation: Next observation
-            reward: Reward received
-            done: Whether episode is done
-            info: Additional information
-        """
-        # Get current observation
-        current_obs = self.scenario.get_observation()
+            # Apply to all motors
+            self.motors[0].setVelocity(left_speed)   # front left
+            self.motors[1].setVelocity(right_speed)  # front right
+            self.motors[2].setVelocity(left_speed)   # back left
+            self.motors[3].setVelocity(right_speed)  # back right
+    
+    def compute_reward(self, action):
+        """Compute reward based on current state and action"""
+        # Basic reward components
+        lidar_data = self.get_lidar_data()
+        min_distance = np.min(lidar_data)
         
+        # Reward for moving forward
+        velocity_reward = self.get_robot_velocity() * 0.1
+        
+        # Penalty for being too close to obstacles
+        collision_penalty = 0.0
+        if min_distance < 0.3:
+            collision_penalty = -10.0
+        elif min_distance < 0.5:
+            collision_penalty = -2.0
+        
+        # Small penalty for large actions (encourage smooth driving)
+        action_penalty = -0.01 * np.sum(np.square(action))
+        
+        # Total reward
+        total_reward = velocity_reward + collision_penalty + action_penalty
+        
+        return total_reward
+    
+    def is_done(self):
+        """Check if episode should end"""
+        self.current_step += 1
+        
+        # Check max steps
+        if self.current_step >= self.max_steps:
+            return True
+        
+        # Check collision
+        lidar_data = self.get_lidar_data()
+        min_distance = np.min(lidar_data)
+        if min_distance < 0.2:  # Collision threshold
+            return True
+        
+        # Check if stuck (optional)
+        # You can add more termination conditions here
+        
+        return False
+    
+    def reset(self):
+        """Reset environment for new episode"""
+        self.current_step = 0
+        
+        # Stop motors
+        for motor in self.motors:
+            motor.setVelocity(0.0)
+        
+        # Reset robot position (if simulation allows)
+        # Note: This might require supervisor privileges
+        # In Webots, you might need to use supervisor mode to reset position
+        
+        # Step simulation to apply changes
+        self.robot.step(self.timestep)
+        
+        # Return initial state
+        return self.get_state()
+    
+    def get_state(self):
+        """Get current state representation"""
+        # Basic state: lidar data + velocity info
+        lidar_data = self.get_lidar_data()
+        velocity = self.get_robot_velocity()
+        angular_velocity = self.get_robot_angular_velocity()
+        
+        state = np.concatenate([
+            lidar_data,
+            [velocity, angular_velocity]
+        ])
+        
+        return state
+    
+    def get_state_size(self):
+        """Get size of state vector"""
+        return self.lidar_rays + 2  # lidar + velocity + angular_velocity
+    
+    def get_action_size(self):
+        """Get size of action vector"""
+        return 2  # [left_motor_speed, right_motor_speed]
+    
+    def step(self, action):
+        """Execute one environment step"""
         # Apply action
-        self.scenario.apply_action(action)
+        self.apply_action(action)
         
         # Step simulation
-        self.scenario.step()
+        self.robot.step(self.timestep)
         
-        # Get next observation
-        next_obs = self.scenario.get_observation()
+        # Get next state
+        next_state = self.get_state()
         
-        # Compute reward and done flag
-        reward, done, termination_reason = self.scenario.compute_reward(
-            current_obs, action, next_obs, self.current_step
-        )
+        # Compute reward
+        reward = self.compute_reward(action)
         
-        # Check for self-collision (additional termination condition)
-        collision_detected, collision_info = self.scenario.check_self_collision()
-        if collision_detected:
-            done = True
-            termination_reason = f"Self-collision: {collision_info}"
-            # Apply penalty for collision if needed
-            reward -= 10.0
+        # Check if done
+        done = self.is_done()
         
-        # Check episode length limit
-        if self.current_step >= self.max_episode_steps - 1:
-            done = True
-            if not termination_reason:
-                termination_reason = "Max episode steps reached"
-        
-        # Update tracking variables
-        self.episode_reward += reward
-        self.current_step += 1
-        self.total_steps += 1
-        
-        # Get episode metric for logging
-        metric_value = self.scenario.get_episode_metric(next_obs)
-        
-        # Prepare info dictionary
-        info = {
-            'episode': {
-                'r': self.episode_reward,
-                'l': self.current_step,
-                't': round(self.total_steps * self.scenario.timestep / 1000.0, 2)  # Time in seconds
-            },
-            'termination_reason': termination_reason,
-            'metric': metric_value,
-            'success': self.scenario.is_success(next_obs, done) if done else False
-        }
-        
-        return next_obs, reward, done, info
-    
-    def render(self, mode: str = 'human') -> Optional[np.ndarray]:
-        """
-        Render the environment.
-        In Webots, rendering is handled by the simulator itself.
-        
-        Args:
-            mode: Rendering mode
-            
-        Returns:
-            None for Webots (rendering is handled by simulator)
-        """
-        if mode == 'human':
-            # Webots handles rendering, so we don't need to do anything
-            return None
-        else:
-            super().render(mode=mode)
-    
-    def close(self) -> None:
-        """
-        Clean up environment resources.
-        """
-        # Webots cleanup if needed
-        pass
-    
-    def get_episode_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics for the current episode.
-        
-        Returns:
-            Dictionary with episode statistics
-        """
-        return {
-            'episode_number': self.episode_count,
-            'episode_steps': self.current_step,
-            'episode_reward': self.episode_reward,
-            'total_steps': self.total_steps,
-            'scenario_name': self.scenario.scenario_name
-        }
-    
-    def seed(self, seed: Optional[int] = None) -> list:
-        """
-        Set the seed for this env's random number generator.
-        
-        Args:
-            seed: Random seed
-            
-        Returns:
-            List of seeds used
-        """
-        if seed is not None:
-            np.random.seed(seed)
-        return [seed]
-
-
-class DiscreteActionEnv(BaseEnv):
-    """
-    Base environment with discrete action space for DQN.
-    """
-    
-    def __init__(self, scenario, max_episode_steps=1000, num_actions: int = None):
-        """
-        Initialize discrete action environment.
-        
-        Args:
-            scenario: BaseScenario instance
-            max_episode_steps: Maximum steps per episode
-            num_actions: Number of discrete actions (optional, can be inferred)
-        """
-        super().__init__(scenario, max_episode_steps)
-        self.num_actions = num_actions or self.scenario.get_act_dim()
-    
-    def _get_action_space(self) -> gym.Space:
-        """
-        Define discrete action space for DQN.
-        """
-        return gym.spaces.Discrete(self.num_actions)
-    
-    def apply_discrete_action(self, action: int) -> np.ndarray:
-        """
-        Convert discrete action to continuous action for the scenario.
-        Override this method based on your specific action mapping.
-        
-        Args:
-            action: Discrete action index
-            
-        Returns:
-            continuous_action: Continuous action array
-        """
-        # Default mapping: evenly spaced actions in [-1, 1] range
-        continuous_action = np.array([(action / (self.num_actions - 1)) * 2 - 1])
-        return continuous_action
-    
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
-        """
-        Execute one time step with discrete action.
-        
-        Args:
-            action: Discrete action index
-            
-        Returns:
-            observation: Next observation
-            reward: Reward received
-            done: Whether episode is done
-            info: Additional information
-        """
-        # Convert discrete action to continuous
-        continuous_action = self.apply_discrete_action(action)
-        
-        # Use parent step method with continuous action
-        return super().step(continuous_action)
-
-
-class ContinuousActionEnv(BaseEnv):
-    """
-    Base environment with continuous action space for PPO.
-    This is the default BaseEnv behavior, but provided for clarity.
-    """
-    
-    def _get_action_space(self) -> gym.Space:
-        """
-        Define continuous action space for PPO.
-        """
-        act_dim = self.scenario.get_act_dim()
-        return gym.spaces.Box(
-            low=-1.0, 
-            high=1.0, 
-            shape=(act_dim,), 
-            dtype=np.float32
-        )
+        return next_state, reward, done, {}
